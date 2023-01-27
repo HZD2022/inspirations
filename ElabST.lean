@@ -1,6 +1,7 @@
 import Lean
 import Init.Data.Nat
 import Init.Data.String
+import Init.Data.Fin
 
 namespace CoC open CoC
 
@@ -34,8 +35,7 @@ def freev : Term -> Name -> Bool
   | pi x t e , n => freev t n || (x != n && freev e n)
   | lam x t e , n => freev t n || (x != n && freev e n)
 
--- macro e:term "[" a:term "]?" : term => `(CoC.freev $e $a)
-notation e "[" a "]?" => freev e a
+notation e "[" a "]ₜ?" => freev e a
 
 def boundv (t : Term)(n : Name) : Bool :=
   match t with
@@ -173,7 +173,7 @@ theorem freshb_th₁ : t[freshb t]'? = false := by
 
 def freshst (m e : Term) : Name := by sorry
 
-theorem freshst_th₁ : m[freshst m e]? = false := by sorry
+theorem freshst_th₁ : m[freshst m e]ₜ? = false := by sorry
 
 theorem freshst_th₂ : e[freshst m e]'? = false := by sorry
 
@@ -203,12 +203,12 @@ def subst (t : Term)(n : Name)(m : Term) : Term :=
   | var x => bif x == n then m else t
   | app f a => app (subst f n m) (subst a n m)
   | pi a A e => bif a == n then pi a (subst A n m) e 
-    else bif e[n]? && m[a]? 
+    else bif e[n]ₜ? && m[a]ₜ? 
       then let z := freshst m e 
         in pi z (subst A n m) (subst (@substn e a z freshst_th₂) n m)
       else pi a (subst A n m) (subst e n m)
   | lam a A e => bif a == n then lam a (subst A n m) e 
-    else bif e[n]? && m[a]? 
+    else bif e[n]ₜ? && m[a]ₜ? 
       then let z := freshst m e 
         in lam z (subst A n m) (subst (@substn e a z freshst_th₂) n m)
       else lam a (subst A n m) (subst e n m)
@@ -225,12 +225,12 @@ theorem subst_def : t[n => m] = match t with
   | var x => bif x == n then m else t
   | app f a => app (subst f n m) (subst a n m)
   | pi a A e => bif a == n then pi a (subst A n m) e 
-    else bif e[n]? && m[a]? 
+    else bif e[n]ₜ? && m[a]ₜ? 
       then let z := freshst m e 
         in pi z (subst A n m) (subst (@substn e a z freshst_th₂) n m)
       else pi a (subst A n m) (subst e n m)
   | lam a A e => bif a == n then lam a (subst A n m) e 
-    else bif e[n]? && m[a]? 
+    else bif e[n]ₜ? && m[a]ₜ? 
       then let z := freshst m e 
         in lam z (subst A n m) (subst (@substn e a z freshst_th₂) n m)
       else lam a (subst A n m) (subst e n m)
@@ -263,7 +263,7 @@ def betan1 : Term -> Term
 
 set_option quotPrecheck false
 
-notation a " ▹ " b => betan1 a = b
+notation a " ▹ " b => (betan1 a = b)
 
 theorem beta_th₀ : (app (lam a A e) x) ▹ e[a => x] := by
   simp [betan1]
@@ -331,23 +331,45 @@ notation Γ " ⊢ " e " : " T => Typing (Γ, e, T)
 #print Term
 #print Typing
 
-def Tcterm (fgs : TTrip) : List TTrip -> Type
-  | [] => Typing fgs
-  | x :: xs => Typing x -> Tcterm fgs xs 
+inductive Vect (A : Type ℓ) : Nat -> Type _
+  | nil : Vect A 0
+  | cons (x : A)(xs : Vect A n) : Vect A (n + 1) 
 
-structure ElabST := 
-  fngoal : TTrip
-  cgoals : List TTrip
-  cterm : Tcterm fngoal cgoals
+def Targs (n : Nat)(A : Type)(T : Type ℓ) : Type _ :=
+  match n with
+  | 0 => T
+  | n + 1 => A -> Targs n A T
+
+def Dargs (n : Nat)(A : Type)(T : Targs n A (Type ℓ)) : Type (_) :=
+  match n with
+  | 0 => T 
+  | m+1 => (a : A) -> (Dargs m A (T a))
+
+variable (A : Type)(T : Targs 4 A Type) in
+#reduce Dargs 4 A T 
+
+structure ElabD :=
+  ncgoal : Nat
+  cgoals : Vect (Σ(n : Nat)(_ : Vect (Fin n) n), (Targs n Term TTrip)) ncgoal
+  fngoal : Targs ncgoal Term TTrip
 -- List.rec (Typing fngoal) (λ x xs tx => Typing x -> tx) cgoals
 
-abbrev ElabM := StateM (Option ElabST ) #reduce ElabM
+def Tcterm : ElabD -> Type _
+  | ⟨ 0, Vect.nil, Tt⟩  => Typing Tt
+  | ⟨ m+1, Vect.cons x xs, fg⟩  => 
+  (h0 : Term) -> Typing (x h0) 
+
+structure ElabST (dt : ElabD) :=
+  cterm : Tcterm dt 
+
+abbrev ElabM := StateT ElabST Option #reduce ElabM
 
 def tintro (n : Name) : ElabM Unit := do 
   let st <- get
-  let ps <- st 
-  match ps with 
-  | ElabST.mk fgs cgl ctm => pure
+  match st with
+  | ElabST.mk fgs cgl ctm => match cgl[0]? with 
+  | none => failure
+  | some ⟨ ctx , tm , ty ⟩ => _
 
 #exit
   | none => pure
